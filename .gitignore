@@ -12,3 +12,10 @@ uv.lock
 
 # Ignore UV init default file
 main.py
+
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+.git
+.env

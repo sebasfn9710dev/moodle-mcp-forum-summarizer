@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# OS / tooling
+.DS_Store
+.git
+.gitignore
+
+# Local env files (set these with -e or in your hosting console)
+.env

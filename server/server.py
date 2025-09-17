@@ -27,6 +27,13 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 
+# NEW: HTTP server bits
+import uvicorn
+from starlette.applications import Starlette
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route, Mount
+
 # -------------------- Logging --------------------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_JSON = os.getenv("LOG_JSON", "false").lower() in ("1","true","yes")
@@ -41,7 +48,6 @@ class _JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
-        # Attach structured extras if present
         for k, v in getattr(record, "__dict__", {}).items():
             if k not in ("levelname","name","msg","args","exc_info","exc_text",
                          "stack_info","lineno","pathname","filename","module",
@@ -112,23 +118,19 @@ def _ai():
 
 # -------------------- Helpers -------------------
 async def moodle_request(wsfunction: str, **params: Any) -> Any:
-    """POST to Moodle REST WS. Returns parsed JSON or {'error': '...'}."""
     if not _config_ok():
         return {"error": "Missing MOODLE_BASE_URL or MOODLE_TOKEN in environment."}
-
     payload = {
-        "wstoken": MOODLE_TOKEN,  # redacted in logs
+        "wstoken": MOODLE_TOKEN,
         "wsfunction": wsfunction,
         "moodlewsrestformat": "json",
         **params,
     }
-
     start = time.perf_counter()
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(API_ENDPOINT, data=payload, timeout=60.0)
             duration = round((time.perf_counter() - start) * 1000, 1)
-            # Log with redactions
             log.debug("Moodle request",
                       extra={"wsfunction": wsfunction,
                              "status_code": r.status_code,
@@ -176,6 +178,7 @@ def fmt_err(resp: Any) -> str | None:
     if isinstance(resp, dict) and "error" in resp:
         return f"Request failed: {resp['error']}"
     return None
+
 
 # -------------------- Tools ---------------------
 
@@ -443,14 +446,42 @@ async def summarize_discussion(discussion_id: int, focus: str = "") -> str:
                     "model": OPENAI_MODEL, "usage": usage_dict})
     return resp.choices[0].message.content.strip()
 
+# -------------------- HTTP app (fixed) ------------------
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+
+def _health(_request):
+    return PlainTextResponse("ok", status_code=200)
+
+def build_app():
+    # Build the MCP Streamable HTTP app (this has its own lifespan)
+    app = mcp.streamable_http_app()   # serves /mcp
+
+    # Attach /healthz directly to THIS app's router (no outer wrapper)
+    app.router.routes.append(Route("/healthz", _health, methods=["GET"]))
+
+    # Add CORS middleware on the same app
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],                 # tighten for prod if needed
+        allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
+        allow_headers=["*"],
+        expose_headers=["Mcp-Session-Id"],   # important for browser MCP clients
+    )
+    return app
+
 # -------------------- Main ----------------------
 if __name__ == "__main__":
-    log.info("Starting MCP server", extra={
-        "transport": "stdio",
+    import uvicorn
+    port = int(os.getenv("PORT", "8080"))
+    log.info("Starting MCP server (HTTP)", extra={
+        "transport": "streamable_http",
+        "port": port,
         "base_url_set": bool(MOODLE_BASE_URL),
         "token_present": bool(MOODLE_TOKEN),
         "endpoint_set": bool(API_ENDPOINT),
         "log_level": LOG_LEVEL,
         "json_logging": LOG_JSON,
     })
-    mcp.run(transport="stdio")
+    uvicorn.run(build_app(), host="0.0.0.0", port=port)
