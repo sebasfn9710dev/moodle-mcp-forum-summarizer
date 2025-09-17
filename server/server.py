@@ -450,6 +450,22 @@ async def summarize_discussion(discussion_id: int, focus: str = "") -> str:
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+API_GATE_KEY = os.getenv("API_GATE_KEY")
+
+class KeyGateMiddleware:
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        # Protect only /mcp; allow /healthz for probes
+        if scope["type"] == "http" and scope["path"].startswith("/mcp"):
+            if scope["method"] != "OPTIONS" and API_GATE_KEY:
+                req = Request(scope, receive=receive)
+                key = req.headers.get("x-api-key")
+                if key != API_GATE_KEY:
+                    return await JSONResponse({"error":"forbidden"}, status_code=403)(scope, receive, send)
+        return await self.app(scope, receive, send)
 
 def _health(_request):
     return PlainTextResponse("ok", status_code=200)
