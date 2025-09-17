@@ -44,7 +44,7 @@ uv --version
    - Save changes.
 
 3. Go to:  
-   `Site administration → Plugins → Web services → Manage protocols`  
+   `Site administration → Server → Web services → Manage protocols`  
    - ✅ Enable **REST protocol**.
 
 4. *(Optional, recommended)* **Create a restricted role** with only the needed capabilities:
@@ -56,7 +56,7 @@ uv --version
 5. Assign this role to the account you’ll use for the token in each course where you need access.
 
 6. **Create a service**:  
-   `Site administration → Plugins → Web services → External services`  
+   `Site administration → Server → Web services → External services`  
    - Add a new service, e.g., **MCP Forum Tools**.  
    - Mark it as **enabled**.  
    - Add the required functions:
@@ -67,7 +67,7 @@ uv --version
      - `mod_forum_get_discussion_posts`
 
 7. **Generate a token**:  
-   `Site administration → Plugins → Web services → Manage tokens`  
+   `Site administration → Server → Web services → Manage tokens`  
    - Create a token for the user and service above.  
    - Copy this token — you’ll use it in `.env` as `MOODLE_TOKEN`.
 
@@ -76,7 +76,7 @@ uv --version
 ## 3. Install the MCP server
 
 ```powershell
-git clone <YOUR_MCP_SERVER_REPO_URL> mcp-moodle
+git clone https://github.com/sebasfn9710dev/moodle-mcp-forum-summarizer mcp-moodle
 cd mcp-moodle
 cd server
 uv init -p 3.11  # or your Python version
