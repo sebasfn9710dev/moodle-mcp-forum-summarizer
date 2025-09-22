@@ -60,10 +60,12 @@ import logging
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from importlib.metadata import version
 
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.responses import JSONResponse,PlainTextResponse
 
 # -------------------- Constants & Defaults --------------------
 HTTP_TIMEOUT_SECS: float = 60.0      # Global POST timeout to Moodle
@@ -73,7 +75,6 @@ USER_AGENT: str = "Moodle-MCP-Server/1.0 (+mcp.fastmcp)"
 # -------------------- Logging --------------------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_JSON = os.getenv("LOG_JSON", "false").lower() in ("1", "true", "yes")
-
 
 class _JsonFormatter(logging.Formatter):
     """Structured JSON log formatter for easier ingestion and analysis."""
@@ -118,6 +119,7 @@ def _setup_logging() -> None:
 
 _setup_logging()
 log = logging.getLogger("moodle_mcp")
+log.info("mcp_version", extra={"mcp_version": version("mcp")})
 
 
 def _redact(value: str, keep: int = 4) -> str:
@@ -135,7 +137,10 @@ MOODLE_TOKEN: str = os.getenv("MOODLE_TOKEN", "")
 API_ENDPOINT: str = f"{MOODLE_BASE_URL}/webservice/rest/server.php" if MOODLE_BASE_URL else ""
 CONDUIT_TOKEN: str = os.getenv("CONDUIT_TOKEN", "").strip()  # optional
 
-mcp = FastMCP("moodle")
+# MCP instances
+mcp_stateful = FastMCP("moodle-stateful")  # sessionful (default)
+mcp_stateless = FastMCP("moodle-stateless", stateless_http=True)  # no session
+mcp_stateless_all_tools = FastMCP("moodle-stateless-all-tools", stateless_http=True)  # no session
 
 
 def _config_ok() -> bool:
@@ -200,7 +205,7 @@ async def moodle_request(wsfunction: str, **params: Any) -> Any:
                 msg = data.get("message", "Unknown Moodle exception")
                 log.warning(
                     "Moodle API exception",
-                    extra={"wsfunction": wsfunction, "duration_ms": duration, "message": msg},
+                    extra={"wsfunction": wsfunction, "duration_ms": duration, "error_message": msg},
                 )
                 return {"error": f"Moodle error: {msg}"}
             return data
@@ -338,7 +343,9 @@ async def conduit_post_user_xml(xml: str) -> Dict[str, Any]:
 
 
 # -------------------- Tools ---------------------
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def search_courses(query: str, page: int = 0, perpage: int = 50, as_json: bool = False) -> str:
     """
     Search courses by a query string.
@@ -361,7 +368,7 @@ async def search_courses(query: str, page: int = 0, perpage: int = 50, as_json: 
         perpage=perpage,
     )
     if err := fmt_err(resp):
-        log.warning("search_courses error", extra={"error": err})
+        log.warning("search_courses error", extra={"error_message": err})
         return err
 
     total = resp.get("total", 0) if isinstance(resp, dict) else 0
@@ -395,7 +402,9 @@ async def search_courses(query: str, page: int = 0, perpage: int = 50, as_json: 
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def confirm_course_by_id(course_id: int, as_json: bool = False) -> str:
     """
     Confirm a course exists and display its key properties.
@@ -411,7 +420,7 @@ async def confirm_course_by_id(course_id: int, as_json: bool = False) -> str:
         value=str(course_id),  # Moodle expects a string
     )
     if err := fmt_err(resp):
-        log.warning("confirm_course_by_id error", extra={"course_id": course_id, "error": err})
+        log.warning("confirm_course_by_id error", extra={"course_id": course_id, "error_message": err})
         return err
 
     courses = resp.get("courses", []) if isinstance(resp, dict) else []
@@ -450,7 +459,9 @@ async def confirm_course_by_id(course_id: int, as_json: bool = False) -> str:
     return "\n".join(pretty)
 
 
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def get_forums_by_course_id(course_id: int, as_json: bool = False) -> str:
     """
     List forums for a specific course.
@@ -462,7 +473,7 @@ async def get_forums_by_course_id(course_id: int, as_json: bool = False) -> str:
     log.info("get_forums_by_course_id called", extra={"course_id": course_id})
     check = await moodle_request("core_course_get_courses_by_field", field="id", value=str(course_id))
     if err := fmt_err(check):
-        log.warning("course check failed", extra={"course_id": course_id, "error": err})
+        log.warning("course check failed", extra={"course_id": course_id, "error_message": err})
         return err
     if not isinstance(check, dict) or not check.get("courses"):
         log.info("course not found", extra={"course_id": course_id})
@@ -470,7 +481,7 @@ async def get_forums_by_course_id(course_id: int, as_json: bool = False) -> str:
 
     resp = await moodle_request("mod_forum_get_forums_by_courses", **{"courseids[0]": course_id})
     if err := fmt_err(resp):
-        log.warning("get_forums_by_course_id error", extra={"course_id": course_id, "error": err})
+        log.warning("get_forums_by_course_id error", extra={"course_id": course_id, "error_message": err})
         return err
 
     forums = resp if isinstance(resp, list) else []
@@ -497,7 +508,9 @@ async def get_forums_by_course_id(course_id: int, as_json: bool = False) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def list_forum_discussions(forum_id: int, as_json: bool = False) -> str:
     """
     List discussions for a given forum.
@@ -509,7 +522,7 @@ async def list_forum_discussions(forum_id: int, as_json: bool = False) -> str:
     log.info("list_forum_discussions called", extra={"forum_id": forum_id})
     resp = await moodle_request("mod_forum_get_forum_discussions", forumid=forum_id)
     if err := fmt_err(resp):
-        log.warning("list_forum_discussions error", extra={"forum_id": forum_id, "error": err})
+        log.warning("list_forum_discussions error", extra={"forum_id": forum_id, "error_message": err})
         return err
 
     discussions = resp.get("discussions", []) if isinstance(resp, dict) else []
@@ -542,7 +555,9 @@ async def list_forum_discussions(forum_id: int, as_json: bool = False) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def get_discussion_posts(discussion_id: int, as_json: bool = True) -> str:
     """
     Retrieve and format all posts for a given discussion.
@@ -579,7 +594,7 @@ async def get_discussion_posts(discussion_id: int, as_json: bool = True) -> str:
                 "Tip: 'get_discussion_posts' needs a *discussion_id*, not a forum_id. "
                 "Run 'list_forum_discussions(forum_id=...)' first and use the 'discussion_id' shown there."
             )
-        log.warning("get_discussion_posts error", extra={"discussion_id": discussion_id, "error": err})
+        log.warning("get_discussion_posts error", extra={"discussion_id": discussion_id, "error_message": err})
         return err
 
     posts = resp.get("posts", []) if isinstance(resp, dict) else (resp or [])
@@ -609,7 +624,9 @@ async def get_discussion_posts(discussion_id: int, as_json: bool = True) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def get_my_userid(as_json: bool = False) -> str:
     """
     Return the current API user's Moodle user id.
@@ -620,7 +637,7 @@ async def get_my_userid(as_json: bool = False) -> str:
     log.info("get_my_userid called")
     resp = await moodle_request("core_webservice_get_site_info")
     if err := fmt_err(resp):
-        log.warning("get_my_userid error", extra={"error": err})
+        log.warning("get_my_userid error", extra={"error_message": err})
         return err
 
     userid = resp.get("userid")
@@ -640,7 +657,9 @@ async def get_my_userid(as_json: bool = False) -> str:
     return f"userid={userid} (username={username}, fullname={fullname})"
 
 
-@mcp.tool()
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
 async def get_my_courses(as_json: bool = False) -> str:
     """
     List the courses the current API user is enrolled in.
@@ -653,7 +672,7 @@ async def get_my_courses(as_json: bool = False) -> str:
 
     site_info = await moodle_request("core_webservice_get_site_info")
     if err := fmt_err(site_info):
-        log.warning("get_my_courses site_info error", extra={"error": err})
+        log.warning("get_my_courses site_info error", extra={"error_message": err})
         return err
 
     userid = site_info.get("userid")
@@ -662,7 +681,7 @@ async def get_my_courses(as_json: bool = False) -> str:
 
     resp = await moodle_request("core_enrol_get_users_courses", userid=userid)
     if err := fmt_err(resp):
-        log.warning("get_my_courses error", extra={"error": err})
+        log.warning("get_my_courses error", extra={"error_message": err})
         return err
 
     courses = resp if isinstance(resp, list) else []
@@ -683,7 +702,7 @@ async def get_my_courses(as_json: bool = False) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp_stateless_all_tools.tool()
 async def get_my_forum_posts(
     as_json: bool = False,
     max_courses: Optional[int] = None,
@@ -715,7 +734,7 @@ async def get_my_forum_posts(
     # 1) Who am I?
     site_info = await moodle_request("core_webservice_get_site_info")
     if err := fmt_err(site_info):
-        log.warning("get_my_forum_posts site_info error", extra={"error": err})
+        log.warning("get_my_forum_posts site_info error", extra={"error_message": err})
         return err
 
     userid = site_info.get("userid")
@@ -727,7 +746,7 @@ async def get_my_forum_posts(
     # 2) My courses
     courses_resp = await moodle_request("core_enrol_get_users_courses", userid=userid)
     if err := fmt_err(courses_resp):
-        log.warning("get_my_forum_posts courses error", extra={"error": err})
+        log.warning("get_my_forum_posts courses error", extra={"error_message": err})
         return err
     courses = courses_resp if isinstance(courses_resp, list) else []
     if not courses:
@@ -749,7 +768,7 @@ async def get_my_forum_posts(
 
         forums_resp = await moodle_request("mod_forum_get_forums_by_courses", **{"courseids[0]": course_id})
         if err := fmt_err(forums_resp):
-            log.warning("forums fetch error", extra={"course_id": course_id, "error": err})
+            log.warning("forums fetch error", extra={"course_id": course_id, "error_message": err})
             forum_items = []
         else:
             forum_items = forums_resp if isinstance(forums_resp, list) else []
@@ -777,7 +796,7 @@ async def get_my_forum_posts(
 
             discussions_resp = await moodle_request("mod_forum_get_forum_discussions", forumid=forum_id)
             if err := fmt_err(discussions_resp):
-                log.warning("discussions fetch error", extra={"forum_id": forum_id, "error": err})
+                log.warning("discussions fetch error", extra={"forum_id": forum_id, "error_message": err})
                 discussions = []
             else:
                 discussions = discussions_resp.get("discussions", []) if isinstance(discussions_resp, dict) else []
@@ -801,7 +820,7 @@ async def get_my_forum_posts(
 
                 posts_resp = await moodle_request("mod_forum_get_discussion_posts", discussionid=discussion_id)
                 if err := fmt_err(posts_resp):
-                    log.warning("posts fetch error", extra={"discussion_id": discussion_id, "error": err})
+                    log.warning("posts fetch error", extra={"discussion_id": discussion_id, "error_message": err})
                     posts = []
                 else:
                     posts = posts_resp.get("posts", []) if isinstance(posts_resp, dict) else (posts_resp or [])
@@ -861,53 +880,40 @@ def build_app():
     Returns:
         A Starlette application exposing /mcp and /healthz.
     """
-    app = mcp.streamable_http_app()  # serves /mcp
+    app_stateful = mcp_stateful.streamable_http_app()  # expects sessions
+    app_stateless = mcp_stateless.streamable_http_app()  # no session needed
+    app_stateless_all_tools = mcp_stateless_all_tools.streamable_http_app()  # no session needed
 
-    # Attach /healthz to THIS app's router (no outer wrapper)
+    app = app_stateless
+    
+     # /healthz on the SAME app
     app.router.routes.append(Route("/healthz", _health, methods=["GET"]))
 
-    # Add permissive CORS; tighten origins/headers for production.
+    # CORS (adjust origins for prod)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
         allow_headers=["*"],
-        expose_headers=["Mcp-Session-Id"],  # important for browser MCP clients
+        expose_headers=["Mcp-Session-Id"],
     )
 
-      # ---- Bearer Auth middleware ----
+    # ---- Bearer Auth across all MCP routes ----
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
-
     TOKEN = os.getenv("MCP_BEARER_TOKEN", "")
 
     class BearerAuth(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
-            if TOKEN:  # only enforce if token is set
-                auth_header = request.headers.get("authorization", "")
-                if auth_header != f"Bearer {TOKEN}":
+            if TOKEN and request.url.path.startswith(("/mcp")):
+                if request.headers.get("authorization") != f"Bearer {TOKEN}":
                     return JSONResponse({"error": "Unauthorized"}, status_code=401)
             return await call_next(request)
 
     app.add_middleware(BearerAuth)
     return app
 
-
-# -------------------- Main ----------------------
 if __name__ == "__main__":
+    import uvicorn, logging
     port = int(os.getenv("PORT", "8080"))
-    log.info(
-        "Starting MCP server (HTTP)",
-        extra={
-            "transport": "streamable_http",
-            "port": port,
-            "base_url_set": bool(MOODLE_BASE_URL),
-            "token_present": bool(MOODLE_TOKEN),
-            "endpoint_set": bool(API_ENDPOINT),
-            "log_level": LOG_LEVEL,
-            "json_logging": LOG_JSON,
-        },
-    )
-    import uvicorn
-
+    logging.getLogger("uvicorn.error").setLevel("WARNING")
     uvicorn.run(build_app(), host="0.0.0.0", port=port)
