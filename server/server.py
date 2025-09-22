@@ -874,6 +874,22 @@ def build_app():
         allow_headers=["*"],
         expose_headers=["Mcp-Session-Id"],  # important for browser MCP clients
     )
+
+      # ---- Bearer Auth middleware ----
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+
+    TOKEN = os.getenv("MCP_BEARER_TOKEN", "")
+
+    class BearerAuth(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            if TOKEN:  # only enforce if token is set
+                auth_header = request.headers.get("authorization", "")
+                if auth_header != f"Bearer {TOKEN}":
+                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return await call_next(request)
+
+    app.add_middleware(BearerAuth)
     return app
 
 
