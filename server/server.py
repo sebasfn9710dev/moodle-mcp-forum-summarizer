@@ -61,6 +61,7 @@ import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from importlib.metadata import version
+import datetime
 
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
@@ -71,6 +72,8 @@ from starlette.responses import JSONResponse,PlainTextResponse
 HTTP_TIMEOUT_SECS: float = 60.0      # Global POST timeout to Moodle
 HTTP_CONDUIT_TIMEOUT_SECS: float = 30.0
 USER_AGENT: str = "Moodle-MCP-Server/1.0 (+mcp.fastmcp)"
+STARTED_AT_ISO = datetime.datetime.utcnow().isoformat() + "Z"
+
 
 # -------------------- Logging --------------------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -700,6 +703,22 @@ async def get_my_courses(as_json: bool = False) -> str:
     for it in items:
         lines.append(f"[{it['id']}] {it['fullname']} (start={it['startdate']}, end={it['enddate']})")
     return "\n".join(lines)
+
+@mcp_stateful.tool()
+@mcp_stateless.tool()
+@mcp_stateless_all_tools.tool()
+def server_info() -> dict:
+    import os, socket, time
+    return {
+        "mode": os.getenv("MCP_MODE", "stateful"),
+        "protocolVersions": ["2025-03-26","2025-06-18"],
+        "instanceId": socket.gethostname(),
+        "startedAt": STARTED_AT_ISO,         # set once at boot
+        "sessionBackend": os.getenv("SESSION_BACKEND","memory"),  # memory|redis|firestore|jwt
+        "commit": os.getenv("GIT_COMMIT","n/a"),
+        "region": os.getenv("REGION","n/a"),
+    }
+
 
 
 @mcp_stateless_all_tools.tool()
