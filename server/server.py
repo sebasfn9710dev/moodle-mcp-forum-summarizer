@@ -884,8 +884,18 @@ def build_app():
     app_stateless = mcp_stateless.streamable_http_app()  # no session needed
     app_stateless_all_tools = mcp_stateless_all_tools.streamable_http_app()  # no session needed
 
-    app = app_stateless
-    
+    MCP_MODE = os.getenv("MCP_MODE", "stateful").lower() # stateful by default
+
+    if MCP_MODE == "stateful":
+        log.warning("Starting in STATEFUL mode (default). Sessions will be used.")
+        app = app_stateful
+    elif MCP_MODE == "stateless":
+        log.warning("Starting in STATELESS mode. No sessions will be used.")
+        app = app_stateless
+    else:
+        log.warning("Starting in STATELESS-ALL-TOOLS mode. No sessions will be used. All tools enabled.")
+        app = app_stateless_all_tools
+
      # /healthz on the SAME app
     app.router.routes.append(Route("/healthz", _health, methods=["GET"]))
 
